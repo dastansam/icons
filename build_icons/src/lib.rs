@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 use std::{env, io};
 
 use gvdb::gresource::{GResourceBuilder, GResourceFileData, PreprocessOptions};
+/// Module containing constants for icons names.
+pub mod manifest_path;
 
-pub const CONFIG_FILE: &str = "icons.toml";
 const GENERAL_PREFIX: &str = "/org/gtkrs/icons/scalable/actions/";
 
 const TARGET_FILE: &str = "resources.gresource";
-const CONSTANTS_FILE: &str = "icon_modules.rs";
+const CONSTANTS_FILE: &str = "manifest_path.rs";
+const CONFIG_FILE: &str = "icons.toml";
 
 #[derive(Default, serde::Deserialize)]
 pub struct Config {
@@ -25,11 +27,6 @@ impl Config {
         let config_file = std::fs::read_to_string(config_path)?;
         let mut config: Config =
             toml::from_str(&config_file).expect("Couldn't parse icon config file");
-
-        if config.icons_folder.is_none() {
-            let shipped_icons_path = option_env!("RELM4_ICONS_FOLDER");
-            config.icons_folder = shipped_icons_path.map(|s| s.to_owned());
-        }
 
         Ok(config)
     }
@@ -51,10 +48,10 @@ pub fn path_to_icon_name(string: &OsStr) -> String {
     }
 }
 
-pub fn build_icons(manifest_path: &str) {
+pub fn bundle_icons(manifest_path: &str) {
     let out_dir = env::var("OUT_DIR").unwrap();
-    let manifest_dir = Path::new(&manifest_path).canonicalize().unwrap();
-    eprintln!("Canonical manifest dir: {manifest_dir:?}");
+
+    eprintln!("Canonical manifest dir: {manifest_path:?}");
 
     let (config, config_dir) = if cfg!(docsrs) {
         if let Ok(source_dir) = env::var("SOURCE_DIR") {
@@ -65,7 +62,7 @@ pub fn build_icons(manifest_path: &str) {
     } else {
         (
             Config::load(manifest_path).expect("couldn't load manifest"),
-            manifest_dir.to_str().unwrap().to_owned(),
+            manifest_path.to_owned(),
         )
     };
 
@@ -81,22 +78,18 @@ pub fn build_icons(manifest_path: &str) {
             .expect("Couldn't open icon path specified in config (relative to the manifest)");
         for entry in read_dir {
             let entry = entry.unwrap();
-            let icon_modules = path_to_icon_name(&entry.file_name());
-            if icons.insert(icon_modules.clone(), entry.path()).is_some() {
-                panic!("Icon with name `{icon_modules}` exists twice")
+            let icon = path_to_icon_name(&entry.file_name());
+            if icons.insert(icon.clone(), entry.path()).is_some() {
+                panic!("Icon with name `{icon}` exists twice")
             }
         }
     }
 
-    println!(
-        "RELM4_ICONS_FOLDER={}",
-        std::env::var("RELM4_ICONS_FOLDER").unwrap_or_default()
-    );
     let icons_folder = config
         .icons_folder
         .expect("Could not find icons folder specified in config");
 
-    if let Some(icon_modules) = config.icons {
+    if let Some(icon_names) = config.icons {
         let dirs = std::fs::read_dir(icons_folder).expect("Couldn't open folder of shipped icons");
         let dirs: Vec<_> = dirs
             .map(|entry| {
@@ -105,18 +98,18 @@ pub fn build_icons(manifest_path: &str) {
             })
             .collect();
 
-        'outer: for icon_modules in icon_modules {
+        'outer: for icon in icon_names {
             for dir in &dirs {
-                let icon_file_name = format!("{icon_modules}-symbolic.svg");
+                let icon_file_name = format!("{icon}-symbolic.svg");
                 let icon_path = dir.join(icon_file_name);
                 if icon_path.exists() {
-                    if icons.insert(icon_modules.clone(), icon_path).is_some() {
-                        panic!("Icon with name `{icon_modules}` exists twice")
+                    if icons.insert(icon.clone(), icon_path).is_some() {
+                        panic!("Icon with name `{icon}` exists twice")
                     }
                     continue 'outer;
                 }
             }
-            panic!("Icon {icon_modules} not found in shipped icons");
+            panic!("Icon {icon} not found in shipped icons");
         }
     }
 
@@ -151,12 +144,12 @@ pub fn build_icons(manifest_path: &str) {
     // Create file that contains the icon names as constants
     let constants: String = icons
         .iter()
-        .map(|(icon_modules, icon_path)| {
-            let const_name = icon_modules.to_uppercase().replace('-', "_");
+        .map(|(icon, icon_path)| {
+            let const_name = icon.to_uppercase().replace('-', "_");
             format!(
                 "
-            /// Icon name of the icon `{icon_modules}`, found at `{icon_path:?}`.
-            pub const {const_name}: &str = \"{icon_modules}\";
+            /// Icon name of the icon `{icon}`, found at `{icon_path:?}`.
+            pub const {const_name}: &str = \"{icon}\";
             "
             )
         })

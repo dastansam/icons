@@ -1,0 +1,9 @@
+[package]
+name = "relm4-icons-build"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gvdb = { version = "0.5.3", features = ["gresource"] }
+serde = { version = "1.0.197", features = ["derive"] }
+toml = "0.8.11"

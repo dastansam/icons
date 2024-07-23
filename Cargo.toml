@@ -15,16 +15,13 @@ keywords = ["gui", "gtk", "gtk4", "elm"]
 categories = ["gui"]
 
 [workspace]
-members = ["update_icons"]
+members = ["update_icons", "build_icons"]
 
 [dependencies]
-gvdb = { version = "0.5.3", features = ["gresource"] }
 gtk = { version = "0.8", package = "gtk4" }
-gio = "0.17"
-glib = "0.17"
 
 [build-dependencies]
-serde = { version = "1.0.197", features = ["derive"] }
+relm4-icons-build = { path = "./build_icons" }
 
 [package.metadata.docs.rs]
 all-features = true

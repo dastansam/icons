@@ -1,40 +1,69 @@
-//! More than 3000 icons, ready for use in your app!
-//!
-//! # Sources
-//!
-//! Icons are from
-//!
-//! + [icon-development-kit](https://gitlab.gnome.org/Teams/Design/icon-development-kit) ([CC0 license](https://gitlab.gnome.org/Teams/Design/icon-development-kit/-/blob/main/COPYING.md))
-//! + [fluentui-system-icons](https://github.com/microsoft/fluentui-system-icons) ([MIT license](https://github.com/microsoft/fluentui-system-icons/blob/main/LICENSE))
+use gtk::{gdk, gio, glib};
+use gvdb::gresource::{GResourceBuilder, GResourceFileData, PreprocessOptions};
+use std::{ops::Deref, sync::OnceLock};
 
-#![warn(
-    missing_debug_implementations,
-    missing_docs,
-    rust_2018_idioms,
-    unreachable_pub,
-    unused_qualifications,
-    clippy::cargo,
-    clippy::must_use_candidate
-)]
-#![allow(clippy::negative_feature_names, clippy::multiple_crate_versions)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+pub mod icon_modules;
 
-/// Module containing constants for icons names.
-pub mod icon_names;
+const GENERAL_PREFIX: &str = "/org/gtkrs/icons/scalable/actions/";
 
-use gtk::{gdk, gio};
+pub struct LazyIcon {
+    name: &'static str,
+    data: &'static [u8],
+    initialized: OnceLock<()>,
+}
 
-/// Initialized the icons and registers them globally for your application.
-pub fn initialize_icons() {
-    gio::resources_register_include!("resources.gresource").unwrap();
-
-    #[allow(clippy::const_is_empty)]
-    if icon_names::APP_ID.is_empty() && icon_names::BASE_RESOURCE_PATH.is_empty() {
-        gtk::init().unwrap();
-
-        let display = gdk::Display::default().unwrap();
-        let theme = gtk::IconTheme::for_display(&display);
-        theme.add_resource_path("/org/gtkrs/icons/");
-        theme.add_resource_path("/org/gtkrs/icons/scalable/actions/");
+impl LazyIcon {
+    pub const fn new(name: &'static str, data: &'static [u8]) -> Self {
+        LazyIcon {
+            name,
+            data,
+            initialized: OnceLock::new(),
+        }
     }
+
+    fn init(&self) {
+        self.initialized.get_or_init(|| {
+            let file_data = GResourceFileData::new(
+                [GENERAL_PREFIX, self.name, ".svg"].into_iter().collect(),
+                std::borrow::Cow::Borrowed(self.data),
+                None,
+                true,
+                &PreprocessOptions::xml_stripblanks(),
+            )
+            .expect("Failed to create file data");
+
+            let resources = vec![file_data];
+            let data = GResourceBuilder::from_file_data(resources)
+                .build()
+                .expect("Failed to build resource bundle");
+
+            let resource = gio::Resource::from_data(&glib::Bytes::from(&data))
+                .expect("Failed to create resource");
+            gio::resources_register(&resource);
+
+            println!("Registered icon: {}", self.name);
+        });
+    }
+
+    pub fn name(&self) -> &str {
+        self.name
+    }
+}
+
+impl Deref for LazyIcon {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.init();
+        self.name
+    }
+}
+
+pub fn initialize_icons() {
+    gtk::init().unwrap();
+
+    let display = gdk::Display::default().unwrap();
+    let theme = gtk::IconTheme::for_display(&display);
+    theme.add_resource_path("/org/gtkrs/icons/");
+    theme.add_resource_path("/org/gtkrs/icons/scalable/actions/");
 }

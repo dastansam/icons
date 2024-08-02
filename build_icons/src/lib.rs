@@ -1,37 +1,41 @@
-use std::{
-    collections::HashMap,
-    env,
-    ffi::OsStr,
-    io,
-    path::{Path, PathBuf},
-};
+use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::{env, io};
 
 use gvdb::gresource::{GResourceBuilder, GResourceFileData, PreprocessOptions};
+/// Module containing constants for icons names.
+pub mod manifest_path;
 
-const CONFIG_FILE: &str = "icons.toml";
 const GENERAL_PREFIX: &str = "/org/gtkrs/icons/scalable/actions/";
-const SHIPPED_ICONS_PATH: &str = "icons";
-
 const TARGET_FILE: &str = "resources.gresource";
 const CONSTANTS_FILE: &str = "icon_names.rs";
+const CONFIG_FILE: &str = "icons.toml";
 
 #[derive(Default, serde::Deserialize)]
-struct Config {
+pub struct Config {
     app_id: Option<String>,
     base_resource_path: Option<String>,
-    icon_folder: Option<String>,
+    icons_folder: Option<String>,
+    shipped_icons_folder: Option<String>,
     icons: Option<Vec<String>>,
 }
 
 impl Config {
-    fn load(dir: &str) -> Result<Self, io::Error> {
+    pub fn load(dir: &str, shipped_icons_folder: Option<String>) -> Result<Self, io::Error> {
         let config_path: PathBuf = [dir, CONFIG_FILE].iter().collect();
         let config_file = std::fs::read_to_string(config_path)?;
-        Ok(toml::from_str(&config_file).expect("Couldn't parse icon config file"))
+        let mut config: Config =
+            toml::from_str(&config_file).expect("Couldn't parse icon config file");
+
+        config.shipped_icons_folder = shipped_icons_folder;
+
+        Ok(config)
     }
 }
 
-fn path_to_icon_name(string: &OsStr) -> String {
+/// Convert file name to icon name
+pub fn path_to_icon_name(string: &OsStr) -> String {
     match string.to_str() {
         Some(string) => {
             if string.ends_with(".svg") {
@@ -47,59 +51,38 @@ fn path_to_icon_name(string: &OsStr) -> String {
     }
 }
 
-fn main() {
+/// Given config and config directory, bundle icons and generate constants for icon names.
+pub fn bundle_icons(config: Config, config_dir: &str) {
     let out_dir = env::var("OUT_DIR").unwrap();
-    let mut manifest_dir = Path::new(&out_dir).canonicalize().unwrap();
-    eprintln!("Canonical manifest dir: {manifest_dir:?}");
-
-    let (config, config_dir) = if cfg!(docsrs) {
-        if let Ok(source_dir) = env::var("SOURCE_DIR") {
-            (Config::load(&source_dir).unwrap_or_default(), source_dir)
-        } else {
-            (Config::default(), "".into())
-        }
-    } else {
-        // Try finding the target directory which is just below the manifest directory
-        // of the user.
-        // Unfortunately, the CARGO_MANIFEST_DIR env var passed by cargo always points
-        // to this crate, so we wouldn't find the users config file this way.
-        while !manifest_dir.join("Cargo.toml").exists() {
-            if !manifest_dir.pop() {
-                panic!("Couldn't find your manifest directory");
-            }
-        }
-        let config_dir = manifest_dir
-            .to_str()
-            .expect("Couldn't convert manifest directory to string")
-            .to_owned();
-        (
-            Config::load(&config_dir).expect("Couldn't find `icons.toml` next to `Cargo.toml`"),
-            config_dir,
-        )
-    };
 
     eprintln!("Canonical config dir: {config_dir:?}");
     println!("cargo:rerun-if-changed={config_dir}/icons.toml");
 
+    println!("Building icons from config: {}", config_dir);
+
     let mut icons: HashMap<String, PathBuf> = HashMap::new();
 
-    if let Some(folder) = &config.icon_folder {
+    if let Some(folder) = &config.icons_folder {
         println!("cargo:rerun-if-changed={folder}");
-        let custom_icons_path: PathBuf = [&config_dir, folder].iter().collect();
+        let custom_icons_path: PathBuf = [config_dir, folder].iter().collect();
         let read_dir = std::fs::read_dir(custom_icons_path)
             .expect("Couldn't open icon path specified in config (relative to the manifest)");
         for entry in read_dir {
             let entry = entry.unwrap();
-            let icon_name = path_to_icon_name(&entry.file_name());
-            if icons.insert(icon_name.clone(), entry.path()).is_some() {
-                panic!("Icon with name `{icon_name}` exists twice")
+            let icon = path_to_icon_name(&entry.file_name());
+            if icons.insert(icon.clone(), entry.path()).is_some() {
+                panic!("Icon with name `{icon}` exists twice")
             }
         }
     }
 
+    let shipped_icons_folder = config
+        .shipped_icons_folder
+        .expect("Could not find icons folder specified in config");
+
     if let Some(icon_names) = config.icons {
         let dirs =
-            std::fs::read_dir(SHIPPED_ICONS_PATH).expect("Couldn't open folder of shipped icons");
+            std::fs::read_dir(shipped_icons_folder).expect("Couldn't open folder of shipped icons");
         let dirs: Vec<_> = dirs
             .map(|entry| {
                 let entry = entry.expect("Couldn't open directories in shipped icon folder");
@@ -107,18 +90,18 @@ fn main() {
             })
             .collect();
 
-        'outer: for icon_name in icon_names {
+        'outer: for icon in icon_names {
             for dir in &dirs {
-                let icon_file_name = format!("{icon_name}-symbolic.svg");
+                let icon_file_name = format!("{icon}-symbolic.svg");
                 let icon_path = dir.join(icon_file_name);
                 if icon_path.exists() {
-                    if icons.insert(icon_name.clone(), icon_path).is_some() {
-                        panic!("Icon with name `{icon_name}` exists twice")
+                    if icons.insert(icon.clone(), icon_path).is_some() {
+                        panic!("Icon with name `{icon}` exists twice")
                     }
                     continue 'outer;
                 }
             }
-            panic!("Icon {icon_name} not found in shipped icons");
+            panic!("Icon {icon} not found in shipped icons");
         }
     }
 
@@ -153,12 +136,12 @@ fn main() {
     // Create file that contains the icon names as constants
     let constants: String = icons
         .iter()
-        .map(|(icon_name, icon_path)| {
-            let const_name = icon_name.to_uppercase().replace('-', "_");
+        .map(|(icon, icon_path)| {
+            let const_name = icon.to_uppercase().replace('-', "_");
             format!(
                 "
-            /// Icon name of the icon `{icon_name}`, found at `{icon_path:?}`.
-            pub const {const_name}: &str = \"{icon_name}\";
+            /// Icon name of the icon `{icon}`, found at `{icon_path:?}`.
+            pub const {const_name}: &str = \"{icon}\";
             "
             )
         })
